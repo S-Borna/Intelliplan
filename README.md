@@ -659,9 +659,9 @@ MIT License - Use freely, attribution appreciated.
 
 ### 🎓 Academic Context
 
-**Program:** DevOps Engineering  
-**Institution:** Chas Academy  
-**Duration:** 3 hours (rapid prototyping challenge)  
+**Program:** DevOps Engineering
+**Institution:** Chas Academy
+**Duration:** 3 hours (rapid prototyping challenge)
 **Focus Areas:** Cloud Architecture, CI/CD, Full-Stack Development, System Design
 
 ---
@@ -681,9 +681,9 @@ MIT License - Use freely, attribution appreciated.
 
 Interested in working together or learning more about this project?
 
-**GitHub:** [S-Borna](https://github.com/S-Borna)  
-**Live Demo:** [intelliplan.saidborna.com](https://intelliplan.saidborna.com)  
-**Portfolio:** Built for enterprise demonstration & technical interviews
+**GitHub:** [S-Borna](https://github.com/S-Borna)
+**Portfolio:** [saidborna.com](https://saidborna.com)
+**Live Demo:** [intelliplan.saidborna.com](https://intelliplan.saidborna.com)
 
 ---
 
