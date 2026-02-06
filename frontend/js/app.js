@@ -1,783 +1,693 @@
-/**
- * Intelliplan 2.0 — Premium Frontend
- * Auth + Customer Portal + Handler Dashboard + Notifications
- */
+/* ═══════════════════════════════════════════════════
+   INTELLIPLAN — PREMIUM SPA APPLICATION
+   ═══════════════════════════════════════════════════ */
 
 const API = '';
-let currentUser = null;
-let authToken = null;
-let notifInterval = null;
+let TOKEN = null;
+let ROLE  = null;
+let USER  = null;
+let NOTIF_INTERVAL = null;
 
-// ═══════════════════════════════════════════════════
-//  INIT
-// ═══════════════════════════════════════════════════
+/* ── Helpers ─── */
+const $ = (s, p = document) => p.querySelector(s);
+const $$ = (s, p = document) => [...p.querySelectorAll(s)];
+const api = async (path, opts = {}) => {
+    const h = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (TOKEN) h['Authorization'] = `Bearer ${TOKEN}`;
+    const r = await fetch(API + path, { ...opts, headers: h });
+    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || r.statusText); }
+    return r.json();
+};
+const fmtDate = d => d ? new Date(d).toLocaleDateString('sv-SE') : '—';
+const fmtTime = d => { if(!d) return ''; const x=new Date(d), n=Date.now()-x.getTime(); if(n<3600000) return `${Math.floor(n/60000)} min sedan`; if(n<86400000) return `${Math.floor(n/3600000)}h sedan`; return x.toLocaleDateString('sv-SE'); };
+const toast = (msg, type='success') => {
+    let c = $('.toast-container');
+    if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+    const t = document.createElement('div');
+    t.className = `toast ${type}`;
+    t.textContent = msg;
+    c.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(40px)'; setTimeout(() => t.remove(), 300); }, 3500);
+};
+const statusLabel = s => ({ submitted:'Inskickad', assessed:'Bedömd', in_progress:'Pågående', completed:'Klar', cancelled:'Avbruten' }[s] || s);
+const statusBadge = s => `<span class="badge badge-${s==='in_progress'?'progress':s}">${statusLabel(s)}</span>`;
 
-document.addEventListener('DOMContentLoaded', () => {
-    // Check stored session
-    const stored = localStorage.getItem('intelliplan_session');
-    if (stored) {
-        try {
-            const s = JSON.parse(stored);
-            authToken = s.token;
-            currentUser = s.user;
-            enterApp();
-        } catch { showView('login'); }
-    } else {
-        showView('login');
-    }
-
-    // Login form
-    document.getElementById('login-form').addEventListener('submit', handleLogin);
-
-    // Tab navigation for both views
-    document.querySelectorAll('.nav-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            const parent = tab.closest('.view');
-            parent.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            const target = tab.dataset.tab;
-            parent.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-            document.getElementById(target).classList.add('active');
-            // Load data as needed
-            if (target === 'tab-consultants') loadConsultants();
-            if (target === 'tab-requests') loadAllRequests();
-            if (target === 'cust-my') loadMyRequests();
-        });
-    });
-
-    // Customer request form
-    document.getElementById('cust-request-form').addEventListener('submit', handleCustomerRequest);
-
-    // Notification buttons
-    document.getElementById('notif-btn')?.addEventListener('click', () => toggleNotifPanel('notif-panel'));
-    document.getElementById('cust-notif-btn')?.addEventListener('click', () => toggleNotifPanel('cust-notif-panel'));
-
-    // Close modals on overlay click
-    document.querySelectorAll('.modal-overlay').forEach(o => {
-        o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
-    });
-});
-
-// ═══════════════════════════════════════════════════
-//  AUTH
-// ═══════════════════════════════════════════════════
-
-function fillDemo(email, password) {
-    document.getElementById('login-email').value = email;
-    document.getElementById('login-password').value = password;
+/* ═══════════════════════════════════════════════════
+   AUTH
+   ═══════════════════════════════════════════════════ */
+function fillDemo(e, p) {
+    $('#login-email').value = e;
+    $('#login-password').value = p;
 }
 
-async function handleLogin(e) {
+$('#login-form').addEventListener('submit', async e => {
     e.preventDefault();
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
-    const errEl = document.getElementById('login-error');
-    errEl.textContent = '';
-
+    const err = $('#login-error');
+    err.textContent = '';
     try {
-        const res = await fetch(`${API}/api/auth/login`, {
+        const data = await api('/api/auth/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ email: $('#login-email').value, password: $('#login-password').value })
         });
-        if (!res.ok) {
-            const err = await res.json();
-            errEl.textContent = err.detail || 'Inloggning misslyckades';
-            return;
-        }
-        const data = await res.json();
-        authToken = data.token;
-        currentUser = data.user;
-        localStorage.setItem('intelliplan_session', JSON.stringify(data));
+        TOKEN = data.token;
+        ROLE  = data.role;
+        USER  = data;
         enterApp();
-    } catch (err) {
-        errEl.textContent = 'Kunde inte ansluta till servern';
+    } catch (ex) { err.textContent = ex.message; }
+});
+
+function enterApp() {
+    $$('.view').forEach(v => v.classList.remove('active'));
+    if (ROLE === 'customer') {
+        $('#view-customer').classList.add('active');
+        initCustomer();
+    } else {
+        $('#view-handler').classList.add('active');
+        initHandler();
     }
+    startNotifPolling();
 }
 
 function logout() {
-    fetch(`${API}/api/auth/logout`, {
-        method: 'POST',
-        headers: authHeaders(),
-    }).catch(() => { });
-    authToken = null;
-    currentUser = null;
-    localStorage.removeItem('intelliplan_session');
-    if (notifInterval) clearInterval(notifInterval);
-    showView('login');
+    TOKEN = null; ROLE = null; USER = null;
+    clearInterval(NOTIF_INTERVAL);
+    $$('.view').forEach(v => v.classList.remove('active'));
+    $('#view-login').classList.add('active');
+    $('#login-email').value = '';
+    $('#login-password').value = '';
 }
 
-function authHeaders() {
-    return {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
-    };
-}
-
-function enterApp() {
-    if (currentUser.role === 'customer') {
-        showView('customer');
-        setupCustomerPortal();
-    } else {
-        showView('handler');
-        setupHandlerDashboard();
-    }
-    // Start notification polling
-    loadNotifications();
-    if (notifInterval) clearInterval(notifInterval);
-    notifInterval = setInterval(loadNotifications, 10000);
-}
-
-function showView(name) {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById(`view-${name}`).classList.add('active');
-}
-
-// ═══════════════════════════════════════════════════
-//  NOTIFICATIONS
-// ═══════════════════════════════════════════════════
-
-async function loadNotifications() {
-    if (!authToken) return;
-    try {
-        const [notifsRes, countRes] = await Promise.all([
-            fetch(`${API}/api/notifications`, { headers: authHeaders() }),
-            fetch(`${API}/api/notifications/unread-count`, { headers: authHeaders() }),
-        ]);
-        const notifs = await notifsRes.json();
-        const { count } = await countRes.json();
-
-        // Update badges
-        const badges = ['notif-badge', 'cust-notif-badge'];
-        badges.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.style.display = count > 0 ? 'inline-block' : 'none';
-                el.textContent = count;
-            }
-        });
-
-        // Render lists
-        const lists = ['notif-list', 'cust-notif-list'];
-        lists.forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            if (notifs.length === 0) {
-                el.innerHTML = '<div class="notif-empty">Inga notifikationer</div>';
-                return;
-            }
-            el.innerHTML = notifs.map(n => `
-                <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="handleNotifClick('${n.id}', '${n.link || ''}')">
-                    <div class="notif-item-title">${esc(n.title)}</div>
-                    <div class="notif-item-msg">${esc(n.message)}</div>
-                    <div class="notif-item-time">${timeAgo(n.created_at)}</div>
-                </div>
-            `).join('');
-        });
-    } catch { }
-}
-
-async function handleNotifClick(notifId, link) {
-    // Mark as read
-    await fetch(`${API}/api/notifications/${notifId}/read`, {
-        method: 'PATCH',
-        headers: authHeaders(),
-    }).catch(() => { });
-
-    // Close panels
-    document.querySelectorAll('.notif-panel').forEach(p => p.classList.remove('open'));
-
-    // Navigate to request if link provided
-    if (link) {
-        openRequestDetail(link);
-    }
-
-    loadNotifications();
-}
-
-async function markAllRead() {
-    await fetch(`${API}/api/notifications/mark-all-read`, {
-        method: 'POST',
-        headers: authHeaders(),
-    }).catch(() => { });
-    loadNotifications();
-    toast('Alla notifikationer markerade som lästa', 'success');
-}
-
-function toggleNotifPanel(panelId) {
-    const panel = document.getElementById(panelId);
-    panel.classList.toggle('open');
-    // Close other panels
-    document.querySelectorAll('.notif-panel').forEach(p => {
-        if (p.id !== panelId) p.classList.remove('open');
-    });
-}
-
-// ═══════════════════════════════════════════════════
-//  HANDLER DASHBOARD
-// ═══════════════════════════════════════════════════
-
-async function setupHandlerDashboard() {
+/* ═══════════════════════════════════════════════════
+   HANDLER DASHBOARD
+   ═══════════════════════════════════════════════════ */
+function initHandler() {
     // Set user info
-    const initials = currentUser.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
-    document.getElementById('user-avatar').textContent = initials;
-    document.getElementById('user-name').textContent = currentUser.full_name.split(' ')[0];
+    const name = USER.name || USER.email.split('@')[0];
+    const initials = name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+    $('#user-name').textContent = name;
+    $('#user-avatar').textContent = initials;
+    $('#welcome-name').textContent = name.split(' ')[0];
 
-    loadDashboardStats();
-    loadOverviewRequests();
+    // Sidebar nav
+    $$('.sidebar-item[data-tab]').forEach(btn => {
+        btn.addEventListener('click', () => switchHandlerTab(btn.dataset.tab, btn));
+    });
+
+    // Sidebar toggle (mobile)
+    $('#sidebar-toggle').addEventListener('click', toggleSidebar);
+
+    // Notification panel
+    $('#notif-btn').addEventListener('click', () => togglePanel('notif-panel'));
+
+    // Filter chips for requests
+    $$('#tab-requests .filter-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            $$('#tab-requests .filter-chip').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+            loadAllRequests(chip.dataset.filter);
+        });
+    });
+
+    // Filter chips for consultants
+    $$('#tab-consultants .filter-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            $$('#tab-consultants .filter-chip').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+            loadConsultants(chip.dataset.filter);
+        });
+    });
+
+    // Search
+    let searchTimer;
+    $('#global-search').addEventListener('input', e => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => applySearch(e.target.value), 300);
+    });
+
+    loadDashboard();
+    loadAllRequests('all');
+    loadConsultants('all');
 }
 
-async function loadDashboardStats() {
+function switchHandlerTab(tabId, btn) {
+    // Update sidebar active
+    $$('.sidebar-item[data-tab]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    // Switch tab content
+    $$('#view-handler .tab-content').forEach(t => t.classList.remove('active'));
+    $(`#${tabId}`).classList.add('active');
+
+    // Update header
+    const titles = {
+        'tab-overview': ['Dashboard', 'Realtidsöversikt av bemanningsoperationer'],
+        'tab-requests': ['Förfrågningar', 'Hantera alla kundförfrågningar'],
+        'tab-consultants': ['Konsulter', 'Konsultpool och tillgänglighet'],
+        'tab-analytics': ['Analys', 'AI-prestanda och nyckeltal']
+    };
+    const [t, s] = titles[tabId] || ['Dashboard', ''];
+    $('#page-title').textContent = t;
+    $('#page-sub').textContent = s;
+
+    // Load data for analytics
+    if (tabId === 'tab-analytics') loadAnalytics();
+
+    // Close sidebar on mobile
+    closeSidebar();
+}
+
+function toggleSidebar() {
+    const sb = $('#sidebar');
+    sb.classList.toggle('open');
+    let bd = $('.sidebar-backdrop');
+    if (!bd) { bd = document.createElement('div'); bd.className = 'sidebar-backdrop'; bd.onclick = closeSidebar; document.body.appendChild(bd); }
+    bd.classList.toggle('open');
+}
+function closeSidebar() {
+    const sb = $('#sidebar');
+    sb.classList.remove('open');
+    const bd = $('.sidebar-backdrop');
+    if (bd) bd.classList.remove('open');
+}
+
+/* ── Dashboard Stats ─── */
+async function loadDashboard() {
     try {
-        const res = await fetch(`${API}/api/dashboard/stats`);
-        const s = await res.json();
-        document.getElementById('kpi-total').textContent = s.total_requests;
-        document.getElementById('kpi-active').textContent = s.active_requests;
-        document.getElementById('kpi-consultants').textContent = `${s.available_consultants}/${s.total_consultants}`;
-        document.getElementById('kpi-feasibility').textContent = `${Math.round(s.feasibility_rate * 100)}%`;
-        document.getElementById('kpi-compliance').textContent = `${s.compliance_score || 0}%`;
-    } catch { }
+        const s = await api('/api/dashboard/stats');
+        $('#kpi-total').textContent = s.total_requests;
+        $('#kpi-active').textContent = s.active_requests;
+        const consText = `${s.available_consultants} / ${s.total_consultants}`;
+        $('#kpi-consultants').textContent = consText;
+        $('#kpi-feasibility').textContent = `${Math.round(s.feasibility_rate)}%`;
+        $('#kpi-compliance').textContent = `${Math.round(s.compliance_score)}%`;
+
+        // Progress bars
+        const maxReq = Math.max(s.total_requests, 1);
+        $('#kpi-total-bar').style.width = '100%';
+        $('#kpi-active-bar').style.width = (s.active_requests / maxReq * 100) + '%';
+        $('#kpi-cons-bar').style.width = (s.available_consultants / Math.max(s.total_consultants,1) * 100) + '%';
+        $('#kpi-feas-bar').style.width = s.feasibility_rate + '%';
+        $('#kpi-comp-bar').style.width = s.compliance_score + '%';
+
+        // Mini stats
+        $('#mini-pending').textContent = s.pending_requests;
+        $('#mini-active').textContent = s.active_requests;
+
+        // Store for analytics
+        window._stats = s;
+
+        // Load overview requests
+        loadOverviewRequests();
+        loadActivityFeed();
+    } catch (e) { console.error('Dashboard load error:', e); }
 }
 
 async function loadOverviewRequests() {
     try {
-        const res = await fetch(`${API}/api/requests`);
-        const requests = await res.json();
-        document.getElementById('overview-requests').innerHTML = requests.slice(0, 10).map(r => renderRequestCard(r)).join('');
-    } catch { }
+        const reqs = await api('/api/requests/');
+        const recent = reqs.slice(0, 5);
+        const cont = $('#overview-requests');
+        if (!recent.length) { cont.innerHTML = '<div class="empty-state-sm">Inga förfrågningar ännu</div>'; return; }
+        cont.innerHTML = recent.map(r => requestCardHTML(r)).join('');
+        cont.querySelectorAll('.request-card').forEach((card, i) => {
+            card.addEventListener('click', () => openRequestDetail(recent[i].id));
+        });
+    } catch(e) { console.error(e); }
 }
 
-async function loadAllRequests() {
+async function loadActivityFeed() {
     try {
-        const res = await fetch(`${API}/api/requests`);
-        const requests = await res.json();
-        document.getElementById('all-requests').innerHTML = requests.map(r => renderRequestCard(r)).join('');
-    } catch { }
-}
-
-function renderRequestCard(r) {
-    const skills = Array.isArray(r.required_skills) ? r.required_skills : [];
-    const skillsStr = skills.slice(0, 3).join(', ') || 'AI-analyserad';
-    const date = new Date(r.created_at).toLocaleDateString('sv-SE');
-    return `
-        <div class="request-card glass" onclick="openRequestDetail('${r.id}')">
-            <div class="req-info">
-                <h4>${esc(r.title)}</h4>
-                <div class="req-meta">
-                    <span>${skillsStr}</span>
-                    <span>${date}</span>
-                    <span>${r.number_of_consultants} konsult${r.number_of_consultants > 1 ? 'er' : ''}</span>
+        const notifs = await api('/api/notifications/');
+        const feed = $('#activity-feed');
+        if (!notifs.length) { feed.innerHTML = '<div class="empty-state-sm">Inga aktiviteter ännu</div>'; return; }
+        feed.innerHTML = notifs.slice(0, 10).map(n => `
+            <div class="activity-item">
+                <div class="activity-dot"></div>
+                <div>
+                    <div>${n.message}</div>
+                    <div class="activity-time">${fmtTime(n.created_at)}</div>
                 </div>
             </div>
-            <div class="req-badges">
-                <span class="badge badge-${r.status}">${statusLabel(r.status)}</span>
-                <span class="badge badge-${r.priority}">${r.priority}</span>
+        `).join('');
+    } catch(e) { console.error(e); }
+}
+
+/* ── All Requests ─── */
+async function loadAllRequests(filter = 'all') {
+    try {
+        const reqs = await api('/api/requests/');
+        let filtered = reqs;
+        if (filter !== 'all') filtered = reqs.filter(r => r.status === filter);
+        const cont = $('#all-requests');
+        const count = $('#request-count');
+        count.textContent = `${filtered.length} st`;
+        if (!filtered.length) { cont.innerHTML = '<div class="empty-state-sm">Inga förfrågningar matchar filtret</div>'; return; }
+        cont.innerHTML = filtered.map(r => requestCardHTML(r)).join('');
+        cont.querySelectorAll('.request-card').forEach((card, i) => {
+            card.addEventListener('click', () => openRequestDetail(filtered[i].id));
+        });
+    } catch(e) { console.error(e); }
+}
+
+function requestCardHTML(r) {
+    const feas = r.feasibility_score != null ? `<div class="gauge-mini" style="--pct:${r.feasibility_score}"><span>${r.feasibility_score}%</span></div>` : '';
+    return `
+        <div class="request-card">
+            <div class="request-card-left">
+                <h4>${r.title}</h4>
+                <div class="request-meta">
+                    <span>${r.company_name || '—'}</span>
+                    <span>${r.required_skills?.join(', ') || ''}</span>
+                    <span>${fmtDate(r.created_at)}</span>
+                </div>
             </div>
-            <div class="req-arrow">→</div>
+            <div class="request-card-right">
+                ${feas}
+                ${statusBadge(r.status)}
+            </div>
         </div>
     `;
 }
 
-// ═══════════════════════════════════════════════════
-//  REQUEST DETAIL MODAL
-// ═══════════════════════════════════════════════════
-
-async function openRequestDetail(requestId) {
-    const modalId = currentUser.role === 'customer' ? 'cust-detail-modal' : 'detail-modal';
-    const contentId = currentUser.role === 'customer' ? 'cust-detail-content' : 'detail-content';
-
+/* ── Request Detail Modal ─── */
+async function openRequestDetail(id) {
     try {
-        const res = await fetch(`${API}/api/requests/${requestId}`);
-        if (!res.ok) throw new Error('Not found');
-        const d = await res.json();
+        const r = await api(`/api/requests/${id}`);
+        const modal = ROLE === 'customer' ? 'cust-detail-modal' : 'detail-modal';
+        const content = ROLE === 'customer' ? 'cust-detail-content' : 'detail-content';
+        const feasClass = r.feasibility_score >= 70 ? 'feas-high' : r.feasibility_score >= 40 ? 'feas-med' : 'feas-low';
+        const feasDetails = r.feasibility_details || {};
 
-        const r = d.request;
-        const a = d.assessment;
-        const skills = Array.isArray(r.required_skills) ? r.required_skills : [];
+        let matchHTML = '';
+        if (r.matching_consultants?.length) {
+            matchHTML = `
+                <div class="modal-section">
+                    <div class="modal-section-title">AI-matchade konsulter</div>
+                    <div class="match-list">${r.matching_consultants.map(m => `
+                        <div class="match-card">
+                            <div class="match-header">
+                                <span class="match-name">${m.name}</span>
+                                <span class="match-score">${m.score}% match</span>
+                            </div>
+                            <div class="match-title">${m.title || ''}</div>
+                            <div class="match-skills">${(m.skills || []).map(s => `<span class="skill-tag">${s}</span>`).join('')}</div>
+                            ${ROLE !== 'customer' ? `
+                            <div class="match-actions">
+                                <button class="btn-primary btn-sm" onclick="assignConsultant(${id}, ${m.consultant_id})">Tilldela</button>
+                            </div>` : ''}
+                        </div>
+                    `).join('')}</div>
+                </div>
+            `;
+        }
 
-        let html = `
-            <button class="modal-close" onclick="this.closest('.modal-overlay').classList.remove('open')">×</button>
-            <h2>${esc(r.title)}</h2>
-            <div class="modal-company">${esc(d.customer.company)} — ${esc(d.customer.name)}</div>
+        let assignHTML = '';
+        if (r.assignments?.length) {
+            assignHTML = `
+                <div class="modal-section">
+                    <div class="modal-section-title">Tilldelningar</div>
+                    <div class="assignment-list">${r.assignments.map(a => `
+                        <div class="assignment-card">
+                            <div class="assignment-info">
+                                <div class="assignment-name">${a.consultant_name || 'Konsult #' + a.consultant_id}</div>
+                                <div class="assignment-detail">${a.consultant_title || ''} · ${a.consultant_skills?.join(', ') || ''}</div>
+                            </div>
+                            <div class="assignment-actions">
+                                <span class="badge badge-${a.status}">${a.status}</span>
+                                ${ROLE === 'customer' && a.status === 'pending' ? `
+                                    <button class="btn-approve" onclick="approveAssignment(${a.id})">Godkänn</button>
+                                    <button class="btn-reject" onclick="rejectAssignment(${a.id})">Avböj</button>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `).join('')}</div>
+                </div>
+            `;
+        }
 
-            <div class="detail-grid">
-                <!-- AI Summary -->
-                <div class="detail-section full-width">
-                    <h3>🤖 AI-analys</h3>
-                    <div class="result-summary">${esc(r.ai_summary || 'Ingen analys tillgänglig')}</div>
-                    <div style="display:flex;gap:16px;flex-wrap:wrap;">
-                        <div><span class="detail-label">Kategori</span><div class="detail-value">${esc(r.ai_category || '—')}</div></div>
-                        <div><span class="detail-label">Komplexitet</span><div class="detail-value">${r.ai_complexity_score ? Math.round(r.ai_complexity_score * 100) + '%' : '—'}</div></div>
-                        <div><span class="detail-label">Status</span><div class="detail-value"><span class="badge badge-${r.status}">${statusLabel(r.status)}</span></div></div>
-                        <div><span class="detail-label">Prioritet</span><div class="detail-value"><span class="badge badge-${r.priority}">${r.priority}</span></div></div>
+        $(`#${content}`).innerHTML = `
+            <button class="modal-close" onclick="closeModal('${modal}')">&times;</button>
+            <h2>${r.title}</h2>
+            <div class="modal-sub">${r.company_name || ''} · ${statusLabel(r.status)} · Skapad ${fmtDate(r.created_at)}</div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">Detaljer</div>
+                <div class="modal-info-grid">
+                    <div class="modal-info-item"><div class="modal-info-label">Beskrivning</div><div class="modal-info-value" style="font-weight:400;font-size:.88rem">${r.description || '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Kompetenser</div><div class="modal-info-value">${r.required_skills?.join(', ') || '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Antal</div><div class="modal-info-value">${r.team_size || '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Budget</div><div class="modal-info-value">${r.max_hourly_rate ? r.max_hourly_rate + ' SEK/h' : '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Start</div><div class="modal-info-value">${fmtDate(r.start_date)}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Slut</div><div class="modal-info-value">${fmtDate(r.end_date)}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Plats</div><div class="modal-info-value">${r.location || '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Distans</div><div class="modal-info-value">${r.remote_ok ? 'Ja' : 'Nej'}</div></div>
+                </div>
+            </div>
+
+            ${r.feasibility_score != null ? `
+            <div class="modal-section">
+                <div class="modal-section-title">AI Genomförbarhetsanalys</div>
+                <div class="feasibility-bar-wrap">
+                    <div class="feasibility-score">
+                        <div class="feasibility-pct" style="color:${r.feasibility_score>=70?'var(--green)':r.feasibility_score>=40?'var(--amber)':'var(--red)'}">${r.feasibility_score}%</div>
+                        <div class="feasibility-label">Genomförbarhet</div>
                     </div>
+                    <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${r.feasibility_score}%"></div></div>
+                    ${Object.keys(feasDetails).length? `
+                    <ul class="feasibility-details">
+                        ${feasDetails.skill_coverage != null ? `<li>Kompetenstäckning: ${feasDetails.skill_coverage}%</li>` : ''}
+                        ${feasDetails.availability != null ? `<li>Tillgänglighet: ${feasDetails.availability}%</li>` : ''}
+                        ${feasDetails.budget_fit != null ? `<li>Budgetpassning: ${feasDetails.budget_fit}%</li>` : ''}
+                        ${feasDetails.timeline_fit != null ? `<li>Tidslinje: ${feasDetails.timeline_fit}%</li>` : ''}
+                    </ul>` : ''}
                 </div>
+            </div>
+            ` : ''}
 
-                <!-- Request details -->
-                <div class="detail-section">
-                    <h3>📋 Förfrågan</h3>
-                    <div class="detail-label">Beskrivning</div>
-                    <div class="detail-value">${esc(r.description)}</div>
-                    <div class="detail-label">Kompetenser</div>
-                    <div class="detail-value">${skills.length > 0 ? skills.map(s => `<span class="skill-tag">${esc(s)}</span>`).join(' ') : '—'}</div>
-                    <div class="detail-label">Antal</div>
-                    <div class="detail-value">${r.number_of_consultants}</div>
-                    ${r.location ? `<div class="detail-label">Plats</div><div class="detail-value">${esc(r.location)}${r.remote_ok ? ' (distans OK)' : ''}</div>` : ''}
-                    ${r.budget_max_hourly ? `<div class="detail-label">Budget</div><div class="detail-value">Max ${r.budget_max_hourly} SEK/h</div>` : ''}
-                </div>
+            ${matchHTML}
+            ${assignHTML}
         `;
 
-        // Feasibility assessment
-        if (a) {
-            const rating = a.overall_rating;
-            const risks = Array.isArray(a.risks) ? a.risks : (typeof a.risks === 'string' ? JSON.parse(a.risks || '[]') : []);
-            const recs = Array.isArray(a.recommendations) ? a.recommendations : (typeof a.recommendations === 'string' ? JSON.parse(a.recommendations || '[]') : []);
-            const alts = Array.isArray(a.alternatives) ? a.alternatives : (typeof a.alternatives === 'string' ? JSON.parse(a.alternatives || '[]') : []);
+        $(`#${modal}`).classList.add('open');
+    } catch (e) { toast(e.message, 'error'); }
+}
 
-            html += `
-                <div class="detail-section">
-                    <h3>📊 Genomförbarhet <span class="ai-badge ai-badge-${rating}">${feasibilityLabel(rating)}</span></h3>
-                    ${gaugeRow('Tillgänglighet', a.availability_score)}
-                    ${gaugeRow('Kompetens', a.skills_match_score)}
-                    ${gaugeRow('Budget', a.budget_fit_score)}
-                    ${gaugeRow('Tidslinje', a.timeline_score)}
-                    ${gaugeRow('Compliance', a.compliance_score)}
-                    <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">
-                        Konfidensgrad: ${Math.round((a.confidence_score || 0) * 100)}%
-                    </div>
-                </div>
-            `;
+function closeModal(id) { $(`#${id}`).classList.remove('open'); }
 
-            // Recommendations
-            if (recs.length > 0) {
-                html += `
-                    <div class="detail-section full-width">
-                        <h3>💡 AI-rekommendationer</h3>
-                        ${recs.map(r => `<div class="insight-item">${esc(r)}</div>`).join('')}
-                    </div>
-                `;
-            }
-        }
-
-        // Matching consultants
-        const assignedConsultantIds = (d.assignments || []).map(a => a.consultant_id);
-        if (d.matching_consultants && d.matching_consultants.length > 0) {
-            html += `
-                <div class="detail-section full-width">
-                    <h3>👥 Matchande konsulter (${d.matching_consultants.length})</h3>
-                    ${d.matching_consultants.map(c => renderMatchCard(c, r.id, skills, assignedConsultantIds)).join('')}
-                </div>
-            `;
-        }
-
-        // Assignments
-        if (d.assignments && d.assignments.length > 0) {
-            html += `
-                <div class="detail-section full-width">
-                    <h3>📌 Tilldelade konsulter (${d.assignments.length})</h3>
-                    ${d.assignments.map(a => renderAssignmentCard(a, r.id)).join('')}
-                </div>
-            `;
-        }
-
-        // Actions
-        if (d.actions && d.actions.length > 0) {
-            html += `
-                <div class="detail-section">
-                    <h3>⚡ Koordinationsplan</h3>
-                    ${d.actions.map(a => `
-                        <div class="action-item">
-                            <div class="action-icon ${a.status === 'completed' ? 'action-done' : 'action-pending'}">
-                                ${a.status === 'completed' ? '✓' : '○'}
-                            </div>
-                            <div>
-                                <div style="font-weight:500">${esc(a.description)}</div>
-                                ${a.result ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(a.result)}</div>` : ''}
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        }
-
-        // Timeline
-        if (d.timeline && d.timeline.length > 0) {
-            html += `
-                <div class="detail-section">
-                    <h3>📅 Tidslinje</h3>
-                    ${d.timeline.map(t => `
-                        <div class="timeline-item">
-                            <div class="timeline-dot"></div>
-                            <div>
-                                <div style="font-weight:500">${esc(t.title)}</div>
-                                ${t.description ? `<div style="font-size:13px;color:var(--text-secondary)">${esc(t.description)}</div>` : ''}
-                                <div class="timeline-time">${timeAgo(t.created_at)} — ${esc(t.actor || 'System')}</div>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        }
-
-        html += '</div>'; // close detail-grid
-
-        document.getElementById(contentId).innerHTML = html;
-        document.getElementById(modalId).classList.add('open');
-    } catch (err) {
-        toast('Kunde inte ladda förfrågan', 'error');
+// Close modals on overlay click
+document.addEventListener('click', e => {
+    if (e.target.classList.contains('modal-overlay')) {
+        e.target.classList.remove('open');
     }
-}
+    // Close notif panels on outside click
+    const np = $('#notif-panel');
+    const cnp = $('#cust-notif-panel');
+    if (np && np.classList.contains('open') && !np.contains(e.target) && !$('#notif-btn').contains(e.target)) np.classList.remove('open');
+    if (cnp && cnp.classList.contains('open') && !cnp.contains(e.target) && !$('#cust-notif-btn')?.contains(e.target)) cnp.classList.remove('open');
+});
 
-function renderMatchCard(c, requestId, requiredSkills, assignedConsultantIds = []) {
-    const scoreClass = c.match_score >= 70 ? 'score-high' : c.match_score >= 40 ? 'score-medium' : 'score-low';
-    const cSkills = Array.isArray(c.skills) ? c.skills : [];
-    const reqLower = requiredSkills.map(s => s.toLowerCase());
-
-    const skillTags = cSkills.map(s => {
-        if (reqLower.includes(s.toLowerCase())) return `<span class="skill-match skill-hit">${esc(s)}</span>`;
-        return `<span class="skill-match skill-extra">${esc(s)}</span>`;
-    }).join('');
-
-    const missedTags = (c.missing_skills || []).map(s =>
-        `<span class="skill-match skill-miss">${esc(s)}</span>`
-    ).join('');
-
-    const isHandler = currentUser && currentUser.role !== 'customer';
-    const isAssigned = assignedConsultantIds.includes(c.id);
-
-    let actionHtml = '';
-    if (isHandler && isAssigned) {
-        actionHtml = `<span class="assignment-badge badge-sent">✓ Tilldelad</span>`;
-    } else if (isHandler) {
-        actionHtml = `<button class="match-assign-btn" onclick="assignConsultant('${requestId}', '${c.id}')">Tilldela konsult</button>`;
-    }
-
-    return `
-        <div class="match-card ${isAssigned ? 'match-card-assigned' : ''}">
-            <div class="match-header">
-                <div>
-                    <div class="match-name">${esc(c.name)}</div>
-                    <div class="match-title">${esc(c.title || '')} — ${c.hourly_rate} SEK/h</div>
-                </div>
-                <span class="match-score ${scoreClass}">${Math.round(c.match_score)}% match</span>
-            </div>
-            <div class="match-skills">${skillTags}${missedTags}</div>
-            ${actionHtml}
-        </div>
-    `;
-}
-
-function renderAssignmentCard(a, requestId) {
-    const statusMap = {
-        proposed: { label: 'Föreslagen', cls: 'badge-proposed' },
-        sent: { label: 'Skickad till konsult', cls: 'badge-sent' },
-        confirmed: { label: 'Godkänd ✓', cls: 'badge-confirmed' },
-        rejected: { label: 'Avböjd', cls: 'badge-rejected' },
-        active: { label: 'Aktiv', cls: 'badge-active' },
-        ended: { label: 'Avslutad', cls: 'badge-ended' },
-    };
-    const st = statusMap[a.status] || { label: a.status, cls: '' };
-    const skills = (a.consultant_skills || []).map(s => `<span class="skill-tag">${esc(s)}</span>`).join(' ');
-
-    const isHandler = currentUser && currentUser.role !== 'customer';
-    const canApprove = isHandler && (a.status === 'sent' || a.status === 'proposed');
-
-    return `
-        <div class="assignment-card">
-            <div class="assignment-header">
-                <div class="assignment-consultant-info">
-                    <div class="assignment-avatar">${esc(a.consultant_name.charAt(0))}</div>
-                    <div>
-                        <div class="assignment-name">${esc(a.consultant_name)}</div>
-                        <div class="assignment-title">${esc(a.consultant_title || '')} — ${a.hourly_rate} SEK/h</div>
-                    </div>
-                </div>
-                <span class="assignment-badge ${st.cls}">${st.label}</span>
-            </div>
-            ${skills ? `<div class="assignment-skills">${skills}</div>` : ''}
-            ${canApprove ? `
-                <div class="assignment-actions">
-                    <button class="btn-approve" onclick="approveAssignment('${requestId}', '${a.id}')">
-                        ✓ Godkänn (konsult accepterar)
-                    </button>
-                    <button class="btn-reject" onclick="rejectAssignment('${requestId}', '${a.id}')">
-                        ✕ Avböj (konsult nekar)
-                    </button>
-                </div>
-            ` : ''}
-            <div class="assignment-meta">Tilldelad ${timeAgo(a.created_at)}</div>
-        </div>
-    `;
-}
-
-async function approveAssignment(requestId, assignmentId) {
+/* ── Assign / Approve / Reject ─── */
+async function assignConsultant(reqId, consId) {
     try {
-        const res = await fetch(`${API}/api/requests/${requestId}/assignments/${assignmentId}/approve`, {
-            method: 'PATCH',
-            headers: authHeaders(),
-        });
-        if (res.ok) {
-            toast('Konsult godkände uppdraget!', 'success');
-            openRequestDetail(requestId);
-            loadDashboardStats();
-        } else {
-            toast('Kunde inte godkänna', 'error');
-        }
-    } catch {
-        toast('Serverfel', 'error');
-    }
+        await api(`/api/requests/${reqId}/assign`, { method: 'POST', body: JSON.stringify({ consultant_id: consId }) });
+        toast('Konsult tilldelad');
+        openRequestDetail(reqId);
+        loadDashboard();
+    } catch (e) { toast(e.message, 'error'); }
 }
 
-async function rejectAssignment(requestId, assignmentId) {
+async function approveAssignment(aid) {
     try {
-        const res = await fetch(`${API}/api/requests/${requestId}/assignments/${assignmentId}/reject`, {
-            method: 'PATCH',
-            headers: authHeaders(),
-        });
-        if (res.ok) {
-            toast('Konsult avböjde uppdraget', 'warning');
-            openRequestDetail(requestId);
-            loadDashboardStats();
-        } else {
-            toast('Kunde inte avböja', 'error');
-        }
-    } catch {
-        toast('Serverfel', 'error');
-    }
+        await api(`/api/requests/assignments/${aid}/approve`, { method: 'POST' });
+        toast('Tilldelning godkänd ✓');
+        // Reload
+        if (ROLE === 'customer') { loadMyRequests(); }
+        closeModal('cust-detail-modal');
+        closeModal('detail-modal');
+    } catch (e) { toast(e.message, 'error'); }
 }
 
-// ═══════════════════════════════════════════════════
-//  CONSULTANTS
-// ═══════════════════════════════════════════════════
-
-async function loadConsultants() {
+async function rejectAssignment(aid) {
     try {
-        const res = await fetch(`${API}/api/consultants`);
-        const consultants = await res.json();
-        document.getElementById('consultant-grid').innerHTML = consultants.map(c => {
-            const skills = Array.isArray(c.skills) ? c.skills : [];
-            const statusClass = c.status.replace(' ', '_');
+        await api(`/api/requests/assignments/${aid}/reject`, { method: 'POST' });
+        toast('Tilldelning avböjd');
+        if (ROLE === 'customer') { loadMyRequests(); }
+        closeModal('cust-detail-modal');
+        closeModal('detail-modal');
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ── Consultants ─── */
+async function loadConsultants(filter = 'all') {
+    try {
+        const url = filter !== 'all' ? `/api/consultants?status=${filter}` : '/api/consultants';
+        const cons = await api(url);
+        const grid = $('#consultant-grid');
+        const count = $('#consultant-count');
+        count.textContent = `${cons.length} st`;
+        if (!cons.length) { grid.innerHTML = '<div class="empty-state-sm">Inga konsulter matchar filtret</div>'; return; }
+        grid.innerHTML = cons.map(c => {
+            const initials = c.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+            const isAvail = c.status === 'available';
             return `
-                <div class="consultant-card glass">
-                    <div class="cons-header">
+                <div class="consultant-card">
+                    <div class="consultant-card-header">
+                        <div class="cons-avatar">${initials}</div>
                         <div>
-                            <div class="cons-name">${esc(c.name)}</div>
-                            <div class="cons-title">${esc(c.title || '')}</div>
+                            <div class="cons-name">${c.name}</div>
+                            <div class="cons-title">${c.title || ''}</div>
                         </div>
-                        <span class="cons-status status-${statusClass}">${consultantStatusLabel(c.status)}</span>
                     </div>
-                    <div class="cons-rate">${c.hourly_rate} SEK/h</div>
-                    <div class="cons-skills">${skills.map(s => `<span class="skill-tag">${esc(s)}</span>`).join('')}</div>
+                    <div class="cons-skills">${(c.skills || []).slice(0,6).map(s=>`<span class="skill-tag">${s}</span>`).join('')}</div>
+                    <div class="cons-status">
+                        <span class="status-dot ${isAvail?'available':'assigned'}"></span>
+                        <span>${isAvail ? 'Ledig' : 'Tilldelad'}</span>
+                        ${c.hourly_rate ? `<span style="margin-left:auto;color:var(--text-faint);font-size:.75rem">${c.hourly_rate} SEK/h</span>` : ''}
+                    </div>
                 </div>
             `;
         }).join('');
-    } catch { }
+    } catch(e) { console.error(e); }
 }
 
-// ═══════════════════════════════════════════════════
-//  CUSTOMER PORTAL
-// ═══════════════════════════════════════════════════
+/* ── Analytics ─── */
+async function loadAnalytics() {
+    const s = window._stats;
+    if (!s) { await loadDashboard(); return loadAnalytics(); }
 
-function setupCustomerPortal() {
-    const initials = currentUser.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
-    document.getElementById('cust-avatar').textContent = initials;
-    document.getElementById('cust-name').textContent = currentUser.full_name.split(' ')[0];
+    // Status chart bars
+    const chartData = [
+        { label: 'Inskickade', value: s.pending_requests, cls: 'bar-blue' },
+        { label: 'Bedömda',    value: Math.max(s.total_requests - s.pending_requests - s.active_requests - s.completed_requests, 0), cls: 'bar-amber' },
+        { label: 'Pågående',   value: s.active_requests, cls: 'bar-green' },
+        { label: 'Klara',      value: s.completed_requests, cls: 'bar-purple' }
+    ];
+    const maxVal = Math.max(...chartData.map(d=>d.value), 1);
+    $('#chart-status').innerHTML = chartData.map(d => `
+        <div class="chart-bar-item">
+            <div class="chart-bar-label">${d.label}</div>
+            <div class="chart-bar-track">
+                <div class="chart-bar-fill ${d.cls}" style="width:${(d.value/maxVal*100)}%">${d.value}</div>
+            </div>
+        </div>
+    `).join('');
+
+    // Donut
+    const avail = s.available_consultants;
+    const assigned = s.total_consultants - avail;
+    const availPct = Math.round(avail / Math.max(s.total_consultants,1) * 100);
+    const assignPct = 100 - availPct;
+    $('#chart-availability').innerHTML = `
+        <div class="donut" style="background:conic-gradient(var(--green) 0 ${availPct * 3.6}deg, var(--amber) ${availPct * 3.6}deg 360deg)">
+            <div class="donut-center">
+                <span class="donut-val">${s.total_consultants}</span>
+                <span class="donut-lbl">Totalt</span>
+            </div>
+        </div>
+        <div class="donut-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Lediga (${avail})</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Tilldelade (${assigned})</div>
+        </div>
+    `;
+
+    // AI Metrics
+    $('#ai-metrics').innerHTML = `
+        <div class="metric-item"><div class="metric-item-value">${s.total_requests}</div><div class="metric-item-label">Analyserade</div></div>
+        <div class="metric-item"><div class="metric-item-value">${Math.round(s.feasibility_rate)}%</div><div class="metric-item-label">Genomförbarhet</div></div>
+        <div class="metric-item"><div class="metric-item-value">${s.total_consultants}</div><div class="metric-item-label">Konsultpool</div></div>
+        <div class="metric-item"><div class="metric-item-value">${s.active_requests}</div><div class="metric-item-label">Aktiva</div></div>
+    `;
+
+    // Big metrics
+    $('#analytics-compliance').textContent = Math.round(s.compliance_score);
 }
 
-async function handleCustomerRequest(e) {
+/* ── Search ─── */
+function applySearch(q) {
+    const query = q.toLowerCase().trim();
+    // Search in visible request cards
+    $$('.request-card').forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(query) ? '' : 'none';
+    });
+    // Search in visible consultant cards
+    $$('.consultant-card').forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(query) ? '' : 'none';
+    });
+}
+
+/* ═══════════════════════════════════════════════════
+   NOTIFICATIONS
+   ═══════════════════════════════════════════════════ */
+function togglePanel(id) {
+    const p = $(`#${id}`);
+    p.classList.toggle('open');
+    if (p.classList.contains('open')) loadNotifications();
+}
+
+async function loadNotifications() {
+    try {
+        const notifs = await api('/api/notifications/');
+        const unread = notifs.filter(n => !n.is_read).length;
+
+        // Update badges
+        const badge = ROLE === 'customer' ? $('#cust-notif-badge') : $('#notif-badge');
+        if (badge) {
+            badge.textContent = unread;
+            badge.style.display = unread > 0 ? '' : 'none';
+        }
+
+        // Render list
+        const listId = ROLE === 'customer' ? 'cust-notif-list' : 'notif-list';
+        const list = $(`#${listId}`);
+        if (!list) return;
+        if (!notifs.length) { list.innerHTML = '<div class="empty-state-sm">Inga notifikationer</div>'; return; }
+        list.innerHTML = notifs.slice(0, 20).map(n => `
+            <div class="notif-item ${n.is_read?'':'unread'}" onclick="readNotif(${n.id})">
+                <div class="notif-text">${n.message}</div>
+                <div class="notif-time">${fmtTime(n.created_at)}</div>
+            </div>
+        `).join('');
+    } catch(e) { console.error(e); }
+}
+
+async function readNotif(id) {
+    try { await api(`/api/notifications/${id}/read`, { method: 'POST' }); loadNotifications(); } catch(e) {}
+}
+
+async function markAllRead() {
+    try { await api('/api/notifications/read-all', { method: 'POST' }); loadNotifications(); toast('Alla markerade som lästa'); } catch(e) {}
+}
+
+function startNotifPolling() {
+    clearInterval(NOTIF_INTERVAL);
+    loadNotifications();
+    NOTIF_INTERVAL = setInterval(loadNotifications, 15000);
+}
+
+/* ═══════════════════════════════════════════════════
+   CUSTOMER PORTAL
+   ═══════════════════════════════════════════════════ */
+function initCustomer() {
+    const name = USER.name || USER.email.split('@')[0];
+    const initials = name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+    if ($('#cust-avatar')) $('#cust-avatar').textContent = initials;
+    if ($('#cust-name')) $('#cust-name').textContent = name;
+
+    // Nav tabs
+    $$('.nav-tab[data-tab]').forEach(tab => {
+        tab.addEventListener('click', () => {
+            $$('.nav-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            $$('#view-customer > .tab-content').forEach(t => t.classList.remove('active'));
+            $(`#${tab.dataset.tab}`).classList.add('active');
+            if (tab.dataset.tab === 'cust-my') loadMyRequests();
+        });
+    });
+
+    // Notif panel
+    if ($('#cust-notif-btn')) {
+        $('#cust-notif-btn').addEventListener('click', () => togglePanel('cust-notif-panel'));
+    }
+
+    // Form submit
+    $('#cust-request-form').addEventListener('submit', submitRequest);
+
+    loadMyRequests();
+}
+
+async function submitRequest(e) {
     e.preventDefault();
     const btn = e.target.querySelector('.btn-primary');
-    btn.classList.add('loading');
-    btn.querySelector('.btn-text').style.display = 'none';
-    btn.querySelector('.btn-loading').style.display = 'inline';
-
-    const customerId = currentUser.customer_id;
-    if (!customerId) {
-        toast('Inget kundkonto kopplat', 'error');
-        btn.classList.remove('loading');
-        btn.querySelector('.btn-text').style.display = 'inline';
-        btn.querySelector('.btn-loading').style.display = 'none';
-        return;
-    }
-
-    const skillsRaw = document.getElementById('cr-skills').value;
-    const skills = skillsRaw ? skillsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-
-    const payload = {
-        customer_id: customerId,
-        title: document.getElementById('cr-title').value,
-        description: document.getElementById('cr-desc').value,
-        required_skills: skills,
-        number_of_consultants: parseInt(document.getElementById('cr-count').value) || 1,
-        start_date: document.getElementById('cr-start').value || null,
-        end_date: document.getElementById('cr-end').value || null,
-        budget_max_hourly: parseFloat(document.getElementById('cr-budget').value) || null,
-        location: document.getElementById('cr-location').value || null,
-        remote_ok: document.getElementById('cr-remote').checked,
-    };
+    const btnText = btn.querySelector('.btn-text');
+    const btnLoad = btn.querySelector('.btn-loading');
+    btnText.style.display = 'none';
+    btnLoad.style.display = 'inline-flex';
+    btn.disabled = true;
 
     try {
-        const res = await fetch(`${API}/api/requests`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error('Failed');
+        const body = {
+            title: $('#cr-title').value,
+            description: $('#cr-desc').value,
+            required_skills: $('#cr-skills').value ? $('#cr-skills').value.split(',').map(s=>s.trim()).filter(Boolean) : [],
+            team_size: parseInt($('#cr-count').value) || 1,
+            start_date: $('#cr-start').value || null,
+            end_date: $('#cr-end').value || null,
+            max_hourly_rate: parseInt($('#cr-budget').value) || null,
+            location: $('#cr-location').value || null,
+            remote_ok: $('#cr-remote').checked
+        };
 
-        const request = await res.json();
-        toast('Förfrågan skickad! AI analyserar...', 'success');
+        const result = await api('/api/requests/', { method: 'POST', body: JSON.stringify(body) });
+        toast('Förfrågan skapad — AI-analys klar!');
 
-        // Show result - load full detail
-        setTimeout(async () => {
-            try {
-                const detailRes = await fetch(`${API}/api/requests/${request.id}`);
-                const detail = await detailRes.json();
-                renderCustomerResult(detail);
-            } catch {
-                renderCustomerResult({ request, customer: { company: '', name: '' } });
-            }
-        }, 500);
+        // Show result
+        showRequestResult(result);
 
+        // Reset form
         e.target.reset();
-        document.getElementById('cr-count').value = '1';
-    } catch (err) {
-        toast('Kunde inte skicka förfrågan', 'error');
+    } catch (ex) {
+        toast(ex.message, 'error');
     } finally {
-        btn.classList.remove('loading');
-        btn.querySelector('.btn-text').style.display = 'inline';
-        btn.querySelector('.btn-loading').style.display = 'none';
+        btnText.style.display = '';
+        btnLoad.style.display = 'none';
+        btn.disabled = false;
     }
 }
 
-function renderCustomerResult(d) {
-    const r = d.request;
-    const a = d.assessment;
-    const resultEl = document.getElementById('cust-result');
+function showRequestResult(r) {
+    const col = $('#cust-result');
+    const feasClass = r.feasibility_score >= 70 ? 'feas-high' : r.feasibility_score >= 40 ? 'feas-med' : 'feas-low';
+    const details = r.feasibility_details || {};
 
-    let html = `<div class="result-panel glass">`;
-    html += `<div class="result-header">
-        <h3>AI-analys klar</h3>
-        ${a ? `<span class="ai-badge ai-badge-${a.overall_rating}">${feasibilityLabel(a.overall_rating)}</span>` : ''}
-    </div>`;
-
-    html += `<div class="result-summary">${esc(r.ai_summary || 'Analyserar...')}</div>`;
-
-    // Feasibility scores
-    if (a) {
-        html += `<div class="result-section">
-            <h4>Genomförbarhetsanalys</h4>
-            ${gaugeRow('Tillgänglighet', a.availability_score)}
-            ${gaugeRow('Kompetens', a.skills_match_score)}
-            ${gaugeRow('Budget', a.budget_fit_score)}
-            ${gaugeRow('Tidslinje', a.timeline_score)}
-            ${gaugeRow('Compliance', a.compliance_score)}
+    let matcherHTML = '';
+    if (r.matching_consultants?.length) {
+        matcherHTML = `<div class="result-card">
+            <h3>🎯 Matchade konsulter (${r.matching_consultants.length})</h3>
+            ${r.matching_consultants.map(m => `
+                <div class="match-card" style="margin-bottom:10px">
+                    <div class="match-header">
+                        <span class="match-name">${m.name}</span>
+                        <span class="match-score">${m.score}% match</span>
+                    </div>
+                    <div class="match-title">${m.title || ''}</div>
+                    <div class="match-skills">${(m.skills || []).map(s=>`<span class="skill-tag">${s}</span>`).join('')}</div>
+                </div>
+            `).join('')}
         </div>`;
     }
 
-    // Matching consultants
-    if (d.matching_consultants && d.matching_consultants.length > 0) {
-        const skills = Array.isArray(r.required_skills) ? r.required_skills : [];
-        html += `<div class="result-section">
-            <h4>Matchande konsulter (${d.matching_consultants.length})</h4>
-            ${d.matching_consultants.map(c => renderMatchCard(c, r.id, skills)).join('')}
-        </div>`;
-    }
-
-    // Recommendations
-    if (a) {
-        const recs = parseJsonField(a.recommendations);
-        if (recs.length > 0) {
-            html += `<div class="result-section">
-                <h4>Rekommendationer</h4>
-                ${recs.map(r => `<div class="insight-item">${esc(r)}</div>`).join('')}
-            </div>`;
-        }
-    }
-
-    html += `<button class="btn-primary" style="margin-top:16px" onclick="openRequestDetail('${r.id}')">Visa fullständig analys</button>`;
-    html += `</div>`;
-
-    resultEl.innerHTML = html;
-}
-
-async function loadMyRequests() {
-    if (!currentUser || !currentUser.customer_id) return;
-    try {
-        const res = await fetch(`${API}/api/requests?customer_id=${currentUser.customer_id}`);
-        const requests = await res.json();
-        const el = document.getElementById('my-requests');
-        if (requests.length === 0) {
-            el.innerHTML = '<div class="empty-state glass"><div class="empty-icon">📋</div><h3>Inga förfrågningar ännu</h3><p>Skapa din första förfrågan i fliken "Ny förfrågan"</p></div>';
-            return;
-        }
-        el.innerHTML = requests.map(r => renderRequestCard(r)).join('');
-    } catch { }
-}
-
-// ═══════════════════════════════════════════════════
-//  HELPERS
-// ═══════════════════════════════════════════════════
-
-function gaugeRow(label, score) {
-    const s = Math.round(score || 0);
-    const cls = s >= 70 ? 'fill-high' : s >= 40 ? 'fill-medium' : 'fill-low';
-    return `
-        <div class="gauge-row">
-            <div class="gauge-label">${label}</div>
-            <div class="gauge-bar"><div class="gauge-fill ${cls}" style="width:${s}%"></div></div>
-            <div class="gauge-val">${s}</div>
+    col.innerHTML = `
+        <div class="result-card glass">
+            <h3>📊 Genomförbarhetsanalys</h3>
+            <div class="feasibility-bar-wrap" style="background:none;border:none;padding:8px 0">
+                <div class="feasibility-score">
+                    <div class="feasibility-pct" style="color:${r.feasibility_score>=70?'var(--green)':r.feasibility_score>=40?'var(--amber)':'var(--red)'}">${r.feasibility_score}%</div>
+                    <div class="feasibility-label">Genomförbarhet</div>
+                </div>
+                <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${r.feasibility_score}%"></div></div>
+                ${Object.keys(details).length ? `
+                <ul class="feasibility-details">
+                    ${details.skill_coverage!=null?`<li>Kompetenstäckning: ${details.skill_coverage}%</li>`:''}
+                    ${details.availability!=null?`<li>Tillgänglighet: ${details.availability}%</li>`:''}
+                    ${details.budget_fit!=null?`<li>Budgetpassning: ${details.budget_fit}%</li>`:''}
+                    ${details.timeline_fit!=null?`<li>Tidslinje: ${details.timeline_fit}%</li>`:''}
+                </ul>` : ''}
+            </div>
         </div>
+        ${matcherHTML}
     `;
 }
 
-function statusLabel(s) {
-    const map = {
-        draft: 'Utkast', submitted: 'Inskickad', analyzing: 'Analyseras',
-        assessed: 'Bedömd', in_progress: 'Pågående', completed: 'Klar',
-        rejected: 'Avvisad', cancelled: 'Avbruten',
-    };
-    return map[s] || s;
-}
-
-function feasibilityLabel(r) {
-    const map = { high: 'Hög', medium: 'Medel', low: 'Låg', not_feasible: 'Ej genomförbar' };
-    return map[r] || r;
-}
-
-function consultantStatusLabel(s) {
-    const map = { available: 'Ledig', assigned: 'Tilldelad', on_leave: 'Frånvarande', ending_soon: 'Avslutar snart' };
-    return map[s] || s;
-}
-
-function parseJsonField(val) {
-    if (Array.isArray(val)) return val;
-    if (typeof val === 'string') {
-        try { return JSON.parse(val); } catch { return []; }
-    }
-    return [];
-}
-
-function timeAgo(dateStr) {
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diff = Math.floor((now - d) / 1000);
-    if (diff < 60) return 'Just nu';
-    if (diff < 3600) return `${Math.floor(diff / 60)} min sedan`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h sedan`;
-    return d.toLocaleDateString('sv-SE');
-}
-
-function esc(str) {
-    if (!str) return '';
-    const el = document.createElement('span');
-    el.textContent = str;
-    return el.innerHTML;
-}
-
-function toast(msg, type = 'info') {
-    const t = document.createElement('div');
-    t.className = `toast toast-${type}`;
-    t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3000);
+async function loadMyRequests() {
+    try {
+        const reqs = await api('/api/requests/');
+        const cont = $('#my-requests');
+        if (!reqs.length) { cont.innerHTML = '<div class="empty-state-sm">Du har inga förfrågningar ännu. Skapa en ny!</div>'; return; }
+        cont.innerHTML = reqs.map(r => requestCardHTML(r)).join('');
+        cont.querySelectorAll('.request-card').forEach((card, i) => {
+            card.addEventListener('click', () => openRequestDetail(reqs[i].id));
+        });
+    } catch(e) { console.error(e); }
 }
