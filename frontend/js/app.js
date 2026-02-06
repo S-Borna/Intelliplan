@@ -4,8 +4,8 @@
 
 const API = '';
 let TOKEN = null;
-let ROLE  = null;
-let USER  = null;
+let ROLE = null;
+let USER = null;
 let NOTIF_INTERVAL = null;
 
 /* ── Helpers ─── */
@@ -15,12 +15,12 @@ const api = async (path, opts = {}) => {
     const h = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
     if (TOKEN) h['Authorization'] = `Bearer ${TOKEN}`;
     const r = await fetch(API + path, { ...opts, headers: h });
-    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || r.statusText); }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
     return r.json();
 };
 const fmtDate = d => d ? new Date(d).toLocaleDateString('sv-SE') : '—';
-const fmtTime = d => { if(!d) return ''; const x=new Date(d), n=Date.now()-x.getTime(); if(n<3600000) return `${Math.floor(n/60000)} min sedan`; if(n<86400000) return `${Math.floor(n/3600000)}h sedan`; return x.toLocaleDateString('sv-SE'); };
-const toast = (msg, type='success') => {
+const fmtTime = d => { if (!d) return ''; const x = new Date(d), n = Date.now() - x.getTime(); if (n < 3600000) return `${Math.floor(n / 60000)} min sedan`; if (n < 86400000) return `${Math.floor(n / 3600000)}h sedan`; return x.toLocaleDateString('sv-SE'); };
+const toast = (msg, type = 'success') => {
     let c = $('.toast-container');
     if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
     const t = document.createElement('div');
@@ -29,8 +29,8 @@ const toast = (msg, type='success') => {
     c.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(40px)'; setTimeout(() => t.remove(), 300); }, 3500);
 };
-const statusLabel = s => ({ submitted:'Inskickad', assessed:'Bedömd', in_progress:'Pågående', completed:'Klar', cancelled:'Avbruten' }[s] || s);
-const statusBadge = s => `<span class="badge badge-${s==='in_progress'?'progress':s}">${statusLabel(s)}</span>`;
+const statusLabel = s => ({ submitted: 'Inskickad', assessed: 'Bedömd', in_progress: 'Pågående', completed: 'Klar', cancelled: 'Avbruten' }[s] || s);
+const statusBadge = s => `<span class="badge badge-${s === 'in_progress' ? 'progress' : s}">${statusLabel(s)}</span>`;
 
 /* ═══════════════════════════════════════════════════
    AUTH
@@ -50,8 +50,8 @@ $('#login-form').addEventListener('submit', async e => {
             body: JSON.stringify({ email: $('#login-email').value, password: $('#login-password').value })
         });
         TOKEN = data.token;
-        ROLE  = data.role;
-        USER  = data;
+        ROLE = data.user.role;
+        USER = data.user;
         enterApp();
     } catch (ex) { err.textContent = ex.message; }
 });
@@ -82,8 +82,8 @@ function logout() {
    ═══════════════════════════════════════════════════ */
 function initHandler() {
     // Set user info
-    const name = USER.name || USER.email.split('@')[0];
-    const initials = name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+    const name = USER.full_name || USER.email.split('@')[0];
+    const initials = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
     $('#user-name').textContent = name;
     $('#user-avatar').textContent = initials;
     $('#welcome-name').textContent = name.split(' ')[0];
@@ -185,7 +185,7 @@ async function loadDashboard() {
         const maxReq = Math.max(s.total_requests, 1);
         $('#kpi-total-bar').style.width = '100%';
         $('#kpi-active-bar').style.width = (s.active_requests / maxReq * 100) + '%';
-        $('#kpi-cons-bar').style.width = (s.available_consultants / Math.max(s.total_consultants,1) * 100) + '%';
+        $('#kpi-cons-bar').style.width = (s.available_consultants / Math.max(s.total_consultants, 1) * 100) + '%';
         $('#kpi-feas-bar').style.width = s.feasibility_rate + '%';
         $('#kpi-comp-bar').style.width = s.compliance_score + '%';
 
@@ -212,7 +212,7 @@ async function loadOverviewRequests() {
         cont.querySelectorAll('.request-card').forEach((card, i) => {
             card.addEventListener('click', () => openRequestDetail(recent[i].id));
         });
-    } catch(e) { console.error(e); }
+    } catch (e) { console.error(e); }
 }
 
 async function loadActivityFeed() {
@@ -229,7 +229,7 @@ async function loadActivityFeed() {
                 </div>
             </div>
         `).join('');
-    } catch(e) { console.error(e); }
+    } catch (e) { console.error(e); }
 }
 
 /* ── All Requests ─── */
@@ -246,7 +246,7 @@ async function loadAllRequests(filter = 'all') {
         cont.querySelectorAll('.request-card').forEach((card, i) => {
             card.addEventListener('click', () => openRequestDetail(filtered[i].id));
         });
-    } catch(e) { console.error(e); }
+    } catch (e) { console.error(e); }
 }
 
 function requestCardHTML(r) {
@@ -349,11 +349,11 @@ async function openRequestDetail(id) {
                 <div class="modal-section-title">AI Genomförbarhetsanalys</div>
                 <div class="feasibility-bar-wrap">
                     <div class="feasibility-score">
-                        <div class="feasibility-pct" style="color:${r.feasibility_score>=70?'var(--green)':r.feasibility_score>=40?'var(--amber)':'var(--red)'}">${r.feasibility_score}%</div>
+                        <div class="feasibility-pct" style="color:${r.feasibility_score >= 70 ? 'var(--green)' : r.feasibility_score >= 40 ? 'var(--amber)' : 'var(--red)'}">${r.feasibility_score}%</div>
                         <div class="feasibility-label">Genomförbarhet</div>
                     </div>
                     <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${r.feasibility_score}%"></div></div>
-                    ${Object.keys(feasDetails).length? `
+                    ${Object.keys(feasDetails).length ? `
                     <ul class="feasibility-details">
                         ${feasDetails.skill_coverage != null ? `<li>Kompetenstäckning: ${feasDetails.skill_coverage}%</li>` : ''}
                         ${feasDetails.availability != null ? `<li>Tillgänglighet: ${feasDetails.availability}%</li>` : ''}
@@ -427,7 +427,7 @@ async function loadConsultants(filter = 'all') {
         count.textContent = `${cons.length} st`;
         if (!cons.length) { grid.innerHTML = '<div class="empty-state-sm">Inga konsulter matchar filtret</div>'; return; }
         grid.innerHTML = cons.map(c => {
-            const initials = c.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+            const initials = c.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
             const isAvail = c.status === 'available';
             return `
                 <div class="consultant-card">
@@ -438,16 +438,16 @@ async function loadConsultants(filter = 'all') {
                             <div class="cons-title">${c.title || ''}</div>
                         </div>
                     </div>
-                    <div class="cons-skills">${(c.skills || []).slice(0,6).map(s=>`<span class="skill-tag">${s}</span>`).join('')}</div>
+                    <div class="cons-skills">${(c.skills || []).slice(0, 6).map(s => `<span class="skill-tag">${s}</span>`).join('')}</div>
                     <div class="cons-status">
-                        <span class="status-dot ${isAvail?'available':'assigned'}"></span>
+                        <span class="status-dot ${isAvail ? 'available' : 'assigned'}"></span>
                         <span>${isAvail ? 'Ledig' : 'Tilldelad'}</span>
                         ${c.hourly_rate ? `<span style="margin-left:auto;color:var(--text-faint);font-size:.75rem">${c.hourly_rate} SEK/h</span>` : ''}
                     </div>
                 </div>
             `;
         }).join('');
-    } catch(e) { console.error(e); }
+    } catch (e) { console.error(e); }
 }
 
 /* ── Analytics ─── */
@@ -458,16 +458,16 @@ async function loadAnalytics() {
     // Status chart bars
     const chartData = [
         { label: 'Inskickade', value: s.pending_requests, cls: 'bar-blue' },
-        { label: 'Bedömda',    value: Math.max(s.total_requests - s.pending_requests - s.active_requests - s.completed_requests, 0), cls: 'bar-amber' },
-        { label: 'Pågående',   value: s.active_requests, cls: 'bar-green' },
-        { label: 'Klara',      value: s.completed_requests, cls: 'bar-purple' }
+        { label: 'Bedömda', value: Math.max(s.total_requests - s.pending_requests - s.active_requests - s.completed_requests, 0), cls: 'bar-amber' },
+        { label: 'Pågående', value: s.active_requests, cls: 'bar-green' },
+        { label: 'Klara', value: s.completed_requests, cls: 'bar-purple' }
     ];
-    const maxVal = Math.max(...chartData.map(d=>d.value), 1);
+    const maxVal = Math.max(...chartData.map(d => d.value), 1);
     $('#chart-status').innerHTML = chartData.map(d => `
         <div class="chart-bar-item">
             <div class="chart-bar-label">${d.label}</div>
             <div class="chart-bar-track">
-                <div class="chart-bar-fill ${d.cls}" style="width:${(d.value/maxVal*100)}%">${d.value}</div>
+                <div class="chart-bar-fill ${d.cls}" style="width:${(d.value / maxVal * 100)}%">${d.value}</div>
             </div>
         </div>
     `).join('');
@@ -475,7 +475,7 @@ async function loadAnalytics() {
     // Donut
     const avail = s.available_consultants;
     const assigned = s.total_consultants - avail;
-    const availPct = Math.round(avail / Math.max(s.total_consultants,1) * 100);
+    const availPct = Math.round(avail / Math.max(s.total_consultants, 1) * 100);
     const assignPct = 100 - availPct;
     $('#chart-availability').innerHTML = `
         <div class="donut" style="background:conic-gradient(var(--green) 0 ${availPct * 3.6}deg, var(--amber) ${availPct * 3.6}deg 360deg)">
@@ -544,20 +544,20 @@ async function loadNotifications() {
         if (!list) return;
         if (!notifs.length) { list.innerHTML = '<div class="empty-state-sm">Inga notifikationer</div>'; return; }
         list.innerHTML = notifs.slice(0, 20).map(n => `
-            <div class="notif-item ${n.is_read?'':'unread'}" onclick="readNotif(${n.id})">
+            <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="readNotif(${n.id})">
                 <div class="notif-text">${n.message}</div>
                 <div class="notif-time">${fmtTime(n.created_at)}</div>
             </div>
         `).join('');
-    } catch(e) { console.error(e); }
+    } catch (e) { console.error(e); }
 }
 
 async function readNotif(id) {
-    try { await api(`/api/notifications/${id}/read`, { method: 'POST' }); loadNotifications(); } catch(e) {}
+    try { await api(`/api/notifications/${id}/read`, { method: 'POST' }); loadNotifications(); } catch (e) { }
 }
 
 async function markAllRead() {
-    try { await api('/api/notifications/read-all', { method: 'POST' }); loadNotifications(); toast('Alla markerade som lästa'); } catch(e) {}
+    try { await api('/api/notifications/read-all', { method: 'POST' }); loadNotifications(); toast('Alla markerade som lästa'); } catch (e) { }
 }
 
 function startNotifPolling() {
@@ -570,8 +570,8 @@ function startNotifPolling() {
    CUSTOMER PORTAL
    ═══════════════════════════════════════════════════ */
 function initCustomer() {
-    const name = USER.name || USER.email.split('@')[0];
-    const initials = name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+    const name = USER.full_name || USER.email.split('@')[0];
+    const initials = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
     if ($('#cust-avatar')) $('#cust-avatar').textContent = initials;
     if ($('#cust-name')) $('#cust-name').textContent = name;
 
@@ -610,7 +610,7 @@ async function submitRequest(e) {
         const body = {
             title: $('#cr-title').value,
             description: $('#cr-desc').value,
-            required_skills: $('#cr-skills').value ? $('#cr-skills').value.split(',').map(s=>s.trim()).filter(Boolean) : [],
+            required_skills: $('#cr-skills').value ? $('#cr-skills').value.split(',').map(s => s.trim()).filter(Boolean) : [],
             team_size: parseInt($('#cr-count').value) || 1,
             start_date: $('#cr-start').value || null,
             end_date: $('#cr-end').value || null,
@@ -652,7 +652,7 @@ function showRequestResult(r) {
                         <span class="match-score">${m.score}% match</span>
                     </div>
                     <div class="match-title">${m.title || ''}</div>
-                    <div class="match-skills">${(m.skills || []).map(s=>`<span class="skill-tag">${s}</span>`).join('')}</div>
+                    <div class="match-skills">${(m.skills || []).map(s => `<span class="skill-tag">${s}</span>`).join('')}</div>
                 </div>
             `).join('')}
         </div>`;
@@ -663,16 +663,16 @@ function showRequestResult(r) {
             <h3>📊 Genomförbarhetsanalys</h3>
             <div class="feasibility-bar-wrap" style="background:none;border:none;padding:8px 0">
                 <div class="feasibility-score">
-                    <div class="feasibility-pct" style="color:${r.feasibility_score>=70?'var(--green)':r.feasibility_score>=40?'var(--amber)':'var(--red)'}">${r.feasibility_score}%</div>
+                    <div class="feasibility-pct" style="color:${r.feasibility_score >= 70 ? 'var(--green)' : r.feasibility_score >= 40 ? 'var(--amber)' : 'var(--red)'}">${r.feasibility_score}%</div>
                     <div class="feasibility-label">Genomförbarhet</div>
                 </div>
                 <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${r.feasibility_score}%"></div></div>
                 ${Object.keys(details).length ? `
                 <ul class="feasibility-details">
-                    ${details.skill_coverage!=null?`<li>Kompetenstäckning: ${details.skill_coverage}%</li>`:''}
-                    ${details.availability!=null?`<li>Tillgänglighet: ${details.availability}%</li>`:''}
-                    ${details.budget_fit!=null?`<li>Budgetpassning: ${details.budget_fit}%</li>`:''}
-                    ${details.timeline_fit!=null?`<li>Tidslinje: ${details.timeline_fit}%</li>`:''}
+                    ${details.skill_coverage != null ? `<li>Kompetenstäckning: ${details.skill_coverage}%</li>` : ''}
+                    ${details.availability != null ? `<li>Tillgänglighet: ${details.availability}%</li>` : ''}
+                    ${details.budget_fit != null ? `<li>Budgetpassning: ${details.budget_fit}%</li>` : ''}
+                    ${details.timeline_fit != null ? `<li>Tidslinje: ${details.timeline_fit}%</li>` : ''}
                 </ul>` : ''}
             </div>
         </div>
@@ -689,5 +689,5 @@ async function loadMyRequests() {
         cont.querySelectorAll('.request-card').forEach((card, i) => {
             card.addEventListener('click', () => openRequestDetail(reqs[i].id));
         });
-    } catch(e) { console.error(e); }
+    } catch (e) { console.error(e); }
 }
