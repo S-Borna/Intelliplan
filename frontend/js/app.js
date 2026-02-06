@@ -149,7 +149,10 @@ function switchHandlerTab(tabId, btn) {
     $('#page-title').textContent = t;
     $('#page-sub').textContent = s;
 
-    // Load data for analytics
+    // Load data for each tab
+    if (tabId === 'tab-overview') loadDashboard();
+    if (tabId === 'tab-requests') loadAllRequests('all');
+    if (tabId === 'tab-consultants') loadConsultants('all');
     if (tabId === 'tab-analytics') loadAnalytics();
 
     // Close sidebar on mobile
