@@ -143,7 +143,17 @@ def list_requests(
     if customer_id:
         query = query.filter(StaffingRequest.customer_id == customer_id)
 
-    return [_serialize_request(r) for r in query.all()]
+    results = []
+    for r in query.all():
+        out = _serialize_request(r)
+        # Enrich with company name
+        if r.customer:
+            out.company_name = r.customer.company
+        # Enrich with feasibility score from assessment
+        if r.assessment:
+            out.feasibility_score = round(r.assessment.confidence_score * 100)
+        results.append(out)
+    return results
 
 
 @router.get("/{request_id}", response_model=RequestDetail)

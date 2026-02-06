@@ -110,6 +110,9 @@ class StaffingRequestOut(BaseModel):
     ai_complexity_score: float | None = None
     created_at: datetime
     updated_at: datetime
+    # Enrichment fields for list view
+    company_name: str | None = None
+    feasibility_score: float | None = None
 
     class Config:
         from_attributes = True

@@ -204,7 +204,7 @@ async function loadDashboard() {
 
 async function loadOverviewRequests() {
     try {
-        const reqs = await api('/api/requests/');
+        const reqs = await api('/api/requests');
         const recent = reqs.slice(0, 5);
         const cont = $('#overview-requests');
         if (!recent.length) { cont.innerHTML = '<div class="empty-state-sm">Inga förfrågningar ännu</div>'; return; }
@@ -217,7 +217,7 @@ async function loadOverviewRequests() {
 
 async function loadActivityFeed() {
     try {
-        const notifs = await api('/api/notifications/');
+        const notifs = await api('/api/notifications');
         const feed = $('#activity-feed');
         if (!notifs.length) { feed.innerHTML = '<div class="empty-state-sm">Inga aktiviteter ännu</div>'; return; }
         feed.innerHTML = notifs.slice(0, 10).map(n => `
@@ -235,7 +235,7 @@ async function loadActivityFeed() {
 /* ── All Requests ─── */
 async function loadAllRequests(filter = 'all') {
     try {
-        const reqs = await api('/api/requests/');
+        const reqs = await api('/api/requests');
         let filtered = reqs;
         if (filter !== 'all') filtered = reqs.filter(r => r.status === filter);
         const cont = $('#all-requests');
@@ -272,28 +272,38 @@ function requestCardHTML(r) {
 /* ── Request Detail Modal ─── */
 async function openRequestDetail(id) {
     try {
-        const r = await api(`/api/requests/${id}`);
+        const data = await api(`/api/requests/${id}`);
+        // Destructure nested RequestDetail response
+        const r = data.request || {};
+        const customer = data.customer || {};
+        const assessment = data.assessment || null;
+        const matchingConsultants = data.matching_consultants || [];
+        const assignments = data.assignments || [];
+        const timeline = data.timeline || [];
+
         const modal = ROLE === 'customer' ? 'cust-detail-modal' : 'detail-modal';
         const content = ROLE === 'customer' ? 'cust-detail-content' : 'detail-content';
-        const feasClass = r.feasibility_score >= 70 ? 'feas-high' : r.feasibility_score >= 40 ? 'feas-med' : 'feas-low';
-        const feasDetails = r.feasibility_details || {};
+
+        // Compute feasibility score from assessment
+        const feasScore = assessment ? Math.round(assessment.confidence_score * 100) : null;
+        const feasClass = feasScore >= 70 ? 'feas-high' : feasScore >= 40 ? 'feas-med' : 'feas-low';
 
         let matchHTML = '';
-        if (r.matching_consultants?.length) {
+        if (matchingConsultants.length) {
             matchHTML = `
                 <div class="modal-section">
                     <div class="modal-section-title">AI-matchade konsulter</div>
-                    <div class="match-list">${r.matching_consultants.map(m => `
+                    <div class="match-list">${matchingConsultants.map(m => `
                         <div class="match-card">
                             <div class="match-header">
                                 <span class="match-name">${m.name}</span>
-                                <span class="match-score">${m.score}% match</span>
+                                <span class="match-score">${Math.round(m.match_score)}% match</span>
                             </div>
                             <div class="match-title">${m.title || ''}</div>
                             <div class="match-skills">${(m.skills || []).map(s => `<span class="skill-tag">${s}</span>`).join('')}</div>
                             ${ROLE !== 'customer' ? `
                             <div class="match-actions">
-                                <button class="btn-primary btn-sm" onclick="assignConsultant(${id}, ${m.consultant_id})">Tilldela</button>
+                                <button class="btn-primary btn-sm" onclick="assignConsultant('${id}', '${m.id}')">Tilldela</button>
                             </div>` : ''}
                         </div>
                     `).join('')}</div>
@@ -302,22 +312,44 @@ async function openRequestDetail(id) {
         }
 
         let assignHTML = '';
-        if (r.assignments?.length) {
+        if (assignments.length) {
             assignHTML = `
                 <div class="modal-section">
                     <div class="modal-section-title">Tilldelningar</div>
-                    <div class="assignment-list">${r.assignments.map(a => `
+                    <div class="assignment-list">${assignments.map(a => {
+                const statusLabels = { pending: 'Väntar', confirmed: 'Godkänd', rejected: 'Nekad', sent: 'Skickad', active: 'Aktiv', ended: 'Avslutad' };
+                const sLabel = statusLabels[a.status] || a.status;
+                return `
                         <div class="assignment-card">
                             <div class="assignment-info">
-                                <div class="assignment-name">${a.consultant_name || 'Konsult #' + a.consultant_id}</div>
+                                <div class="assignment-name">${a.consultant_name || 'Konsult'}</div>
                                 <div class="assignment-detail">${a.consultant_title || ''} · ${a.consultant_skills?.join(', ') || ''}</div>
                             </div>
                             <div class="assignment-actions">
-                                <span class="badge badge-${a.status}">${a.status}</span>
-                                ${ROLE === 'customer' && a.status === 'pending' ? `
-                                    <button class="btn-approve" onclick="approveAssignment(${a.id})">Godkänn</button>
-                                    <button class="btn-reject" onclick="rejectAssignment(${a.id})">Avböj</button>
+                                <span class="badge badge-${a.status}">${sLabel}</span>
+                                ${a.status === 'pending' ? `
+                                    <button class="btn-approve" onclick="approveAssignment('${id}', '${a.id}')">Godkänn</button>
+                                    <button class="btn-reject" onclick="rejectAssignment('${id}', '${a.id}')">Avböj</button>
                                 ` : ''}
+                            </div>
+                        </div>`;
+            }).join('')}</div>
+                </div>
+            `;
+        }
+
+        let timelineHTML = '';
+        if (timeline.length) {
+            timelineHTML = `
+                <div class="modal-section">
+                    <div class="modal-section-title">Tidslinje</div>
+                    <div class="timeline-list">${timeline.map(t => `
+                        <div class="timeline-item">
+                            <div class="timeline-dot"></div>
+                            <div class="timeline-body">
+                                <div class="timeline-title">${t.title}</div>
+                                <div class="timeline-desc">${t.description || ''}</div>
+                                <div class="timeline-meta">${t.actor || ''} · ${fmtTime(t.created_at)}</div>
                             </div>
                         </div>
                     `).join('')}</div>
@@ -325,47 +357,64 @@ async function openRequestDetail(id) {
             `;
         }
 
+        let risksHTML = '';
+        if (assessment && assessment.risks?.length) {
+            risksHTML = `
+                <div class="modal-section">
+                    <div class="modal-section-title">Risker & Rekommendationer</div>
+                    <div style="display:grid;gap:12px">
+                        ${assessment.risks.length ? `<div><strong style="color:var(--amber)">⚠ Risker</strong><ul style="margin:6px 0 0 18px;color:var(--text-light)">${assessment.risks.map(r => `<li>${r}</li>`).join('')}</ul></div>` : ''}
+                        ${assessment.recommendations?.length ? `<div><strong style="color:var(--green)">✓ Rekommendationer</strong><ul style="margin:6px 0 0 18px;color:var(--text-light)">${assessment.recommendations.map(r => `<li>${r}</li>`).join('')}</ul></div>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
         $(`#${content}`).innerHTML = `
             <button class="modal-close" onclick="closeModal('${modal}')">&times;</button>
-            <h2>${r.title}</h2>
-            <div class="modal-sub">${r.company_name || ''} · ${statusLabel(r.status)} · Skapad ${fmtDate(r.created_at)}</div>
+            <h2>${r.title || '—'}</h2>
+            <div class="modal-sub">${customer.company || ''} · ${statusLabel(r.status)} · Skapad ${fmtDate(r.created_at)}</div>
 
             <div class="modal-section">
                 <div class="modal-section-title">Detaljer</div>
                 <div class="modal-info-grid">
                     <div class="modal-info-item"><div class="modal-info-label">Beskrivning</div><div class="modal-info-value" style="font-weight:400;font-size:.88rem">${r.description || '—'}</div></div>
-                    <div class="modal-info-item"><div class="modal-info-label">Kompetenser</div><div class="modal-info-value">${r.required_skills?.join(', ') || '—'}</div></div>
-                    <div class="modal-info-item"><div class="modal-info-label">Antal</div><div class="modal-info-value">${r.team_size || '—'}</div></div>
-                    <div class="modal-info-item"><div class="modal-info-label">Budget</div><div class="modal-info-value">${r.max_hourly_rate ? r.max_hourly_rate + ' SEK/h' : '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Kompetenser</div><div class="modal-info-value">${(Array.isArray(r.required_skills) ? r.required_skills : []).join(', ') || '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Antal</div><div class="modal-info-value">${r.number_of_consultants || '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Budget</div><div class="modal-info-value">${r.budget_max_hourly ? r.budget_max_hourly + ' SEK/h' : '—'}</div></div>
                     <div class="modal-info-item"><div class="modal-info-label">Start</div><div class="modal-info-value">${fmtDate(r.start_date)}</div></div>
                     <div class="modal-info-item"><div class="modal-info-label">Slut</div><div class="modal-info-value">${fmtDate(r.end_date)}</div></div>
                     <div class="modal-info-item"><div class="modal-info-label">Plats</div><div class="modal-info-value">${r.location || '—'}</div></div>
                     <div class="modal-info-item"><div class="modal-info-label">Distans</div><div class="modal-info-value">${r.remote_ok ? 'Ja' : 'Nej'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">Prioritet</div><div class="modal-info-value">${r.priority || '—'}</div></div>
+                    <div class="modal-info-item"><div class="modal-info-label">AI-kategori</div><div class="modal-info-value">${r.ai_category || '—'}</div></div>
                 </div>
             </div>
 
-            ${r.feasibility_score != null ? `
+            ${feasScore != null ? `
             <div class="modal-section">
                 <div class="modal-section-title">AI Genomförbarhetsanalys</div>
                 <div class="feasibility-bar-wrap">
                     <div class="feasibility-score">
-                        <div class="feasibility-pct" style="color:${r.feasibility_score >= 70 ? 'var(--green)' : r.feasibility_score >= 40 ? 'var(--amber)' : 'var(--red)'}">${r.feasibility_score}%</div>
+                        <div class="feasibility-pct" style="color:${feasScore >= 70 ? 'var(--green)' : feasScore >= 40 ? 'var(--amber)' : 'var(--red)'}">${feasScore}%</div>
                         <div class="feasibility-label">Genomförbarhet</div>
                     </div>
-                    <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${r.feasibility_score}%"></div></div>
-                    ${Object.keys(feasDetails).length ? `
+                    <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${feasScore}%"></div></div>
                     <ul class="feasibility-details">
-                        ${feasDetails.skill_coverage != null ? `<li>Kompetenstäckning: ${feasDetails.skill_coverage}%</li>` : ''}
-                        ${feasDetails.availability != null ? `<li>Tillgänglighet: ${feasDetails.availability}%</li>` : ''}
-                        ${feasDetails.budget_fit != null ? `<li>Budgetpassning: ${feasDetails.budget_fit}%</li>` : ''}
-                        ${feasDetails.timeline_fit != null ? `<li>Tidslinje: ${feasDetails.timeline_fit}%</li>` : ''}
-                    </ul>` : ''}
+                        <li>Kompetenstäckning: ${Math.round(assessment.skills_match_score)}%</li>
+                        <li>Tillgänglighet: ${Math.round(assessment.availability_score)}%</li>
+                        <li>Budgetpassning: ${Math.round(assessment.budget_fit_score)}%</li>
+                        <li>Tidslinje: ${Math.round(assessment.timeline_score)}%</li>
+                        <li>Compliance: ${Math.round(assessment.compliance_score)}%</li>
+                    </ul>
                 </div>
             </div>
             ` : ''}
 
+            ${risksHTML}
             ${matchHTML}
             ${assignHTML}
+            ${timelineHTML}
         `;
 
         $(`#${modal}`).classList.add('open');
@@ -389,27 +438,26 @@ document.addEventListener('click', e => {
 /* ── Assign / Approve / Reject ─── */
 async function assignConsultant(reqId, consId) {
     try {
-        await api(`/api/requests/${reqId}/assign`, { method: 'POST', body: JSON.stringify({ consultant_id: consId }) });
+        await api(`/api/requests/${reqId}/assign/${consId}`, { method: 'POST' });
         toast('Konsult tilldelad');
         openRequestDetail(reqId);
         loadDashboard();
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function approveAssignment(aid) {
+async function approveAssignment(reqId, aid) {
     try {
-        await api(`/api/requests/assignments/${aid}/approve`, { method: 'POST' });
+        await api(`/api/requests/${reqId}/assignments/${aid}/approve`, { method: 'PATCH' });
         toast('Tilldelning godkänd ✓');
-        // Reload
         if (ROLE === 'customer') { loadMyRequests(); }
         closeModal('cust-detail-modal');
         closeModal('detail-modal');
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function rejectAssignment(aid) {
+async function rejectAssignment(reqId, aid) {
     try {
-        await api(`/api/requests/assignments/${aid}/reject`, { method: 'POST' });
+        await api(`/api/requests/${reqId}/assignments/${aid}/reject`, { method: 'PATCH' });
         toast('Tilldelning avböjd');
         if (ROLE === 'customer') { loadMyRequests(); }
         closeModal('cust-detail-modal');
@@ -528,7 +576,7 @@ function togglePanel(id) {
 
 async function loadNotifications() {
     try {
-        const notifs = await api('/api/notifications/');
+        const notifs = await api('/api/notifications');
         const unread = notifs.filter(n => !n.is_read).length;
 
         // Update badges
@@ -544,7 +592,7 @@ async function loadNotifications() {
         if (!list) return;
         if (!notifs.length) { list.innerHTML = '<div class="empty-state-sm">Inga notifikationer</div>'; return; }
         list.innerHTML = notifs.slice(0, 20).map(n => `
-            <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="readNotif(${n.id})">
+            <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="readNotif('${n.id}')">
                 <div class="notif-text">${n.message}</div>
                 <div class="notif-time">${fmtTime(n.created_at)}</div>
             </div>
@@ -553,11 +601,11 @@ async function loadNotifications() {
 }
 
 async function readNotif(id) {
-    try { await api(`/api/notifications/${id}/read`, { method: 'POST' }); loadNotifications(); } catch (e) { }
+    try { await api(`/api/notifications/${id}/read`, { method: 'PATCH' }); loadNotifications(); } catch (e) { }
 }
 
 async function markAllRead() {
-    try { await api('/api/notifications/read-all', { method: 'POST' }); loadNotifications(); toast('Alla markerade som lästa'); } catch (e) { }
+    try { await api('/api/notifications/mark-all-read', { method: 'POST' }); loadNotifications(); toast('Alla markerade som lästa'); } catch (e) { }
 }
 
 function startNotifPolling() {
@@ -611,15 +659,15 @@ async function submitRequest(e) {
             title: $('#cr-title').value,
             description: $('#cr-desc').value,
             required_skills: $('#cr-skills').value ? $('#cr-skills').value.split(',').map(s => s.trim()).filter(Boolean) : [],
-            team_size: parseInt($('#cr-count').value) || 1,
+            number_of_consultants: parseInt($('#cr-count').value) || 1,
             start_date: $('#cr-start').value || null,
             end_date: $('#cr-end').value || null,
-            max_hourly_rate: parseInt($('#cr-budget').value) || null,
+            budget_max_hourly: parseInt($('#cr-budget').value) || null,
             location: $('#cr-location').value || null,
             remote_ok: $('#cr-remote').checked
         };
 
-        const result = await api('/api/requests/', { method: 'POST', body: JSON.stringify(body) });
+        const result = await api('/api/requests', { method: 'POST', body: JSON.stringify(body) });
         toast('Förfrågan skapad — AI-analys klar!');
 
         // Show result
@@ -638,51 +686,33 @@ async function submitRequest(e) {
 
 function showRequestResult(r) {
     const col = $('#cust-result');
-    const feasClass = r.feasibility_score >= 70 ? 'feas-high' : r.feasibility_score >= 40 ? 'feas-med' : 'feas-low';
-    const details = r.feasibility_details || {};
-
-    let matcherHTML = '';
-    if (r.matching_consultants?.length) {
-        matcherHTML = `<div class="result-card">
-            <h3>🎯 Matchade konsulter (${r.matching_consultants.length})</h3>
-            ${r.matching_consultants.map(m => `
-                <div class="match-card" style="margin-bottom:10px">
-                    <div class="match-header">
-                        <span class="match-name">${m.name}</span>
-                        <span class="match-score">${m.score}% match</span>
-                    </div>
-                    <div class="match-title">${m.title || ''}</div>
-                    <div class="match-skills">${(m.skills || []).map(s => `<span class="skill-tag">${s}</span>`).join('')}</div>
-                </div>
-            `).join('')}
-        </div>`;
-    }
+    const feasScore = r.ai_complexity_score != null ? Math.round(r.ai_complexity_score * 100) : null;
+    const feasClass = feasScore >= 70 ? 'feas-high' : feasScore >= 40 ? 'feas-med' : 'feas-low';
 
     col.innerHTML = `
         <div class="result-card glass">
-            <h3>📊 Genomförbarhetsanalys</h3>
+            <h3>📊 AI-analys klar</h3>
+            ${feasScore != null ? `
             <div class="feasibility-bar-wrap" style="background:none;border:none;padding:8px 0">
                 <div class="feasibility-score">
-                    <div class="feasibility-pct" style="color:${r.feasibility_score >= 70 ? 'var(--green)' : r.feasibility_score >= 40 ? 'var(--amber)' : 'var(--red)'}">${r.feasibility_score}%</div>
-                    <div class="feasibility-label">Genomförbarhet</div>
+                    <div class="feasibility-pct" style="color:${feasScore >= 70 ? 'var(--green)' : feasScore >= 40 ? 'var(--amber)' : 'var(--red)'}">${feasScore}%</div>
+                    <div class="feasibility-label">Komplexitetsbedömning</div>
                 </div>
-                <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${r.feasibility_score}%"></div></div>
-                ${Object.keys(details).length ? `
-                <ul class="feasibility-details">
-                    ${details.skill_coverage != null ? `<li>Kompetenstäckning: ${details.skill_coverage}%</li>` : ''}
-                    ${details.availability != null ? `<li>Tillgänglighet: ${details.availability}%</li>` : ''}
-                    ${details.budget_fit != null ? `<li>Budgetpassning: ${details.budget_fit}%</li>` : ''}
-                    ${details.timeline_fit != null ? `<li>Tidslinje: ${details.timeline_fit}%</li>` : ''}
-                </ul>` : ''}
+                <div class="feas-bar"><div class="feas-bar-fill ${feasClass}" style="width:${feasScore}%"></div></div>
+            </div>` : ''}
+            <div style="margin-top:8px;color:var(--text-light);font-size:.88rem">
+                ${r.ai_summary || ''}
+            </div>
+            <div style="margin-top:8px;font-size:.82rem;color:var(--text-faint)">
+                Kategori: ${r.ai_category || '—'}
             </div>
         </div>
-        ${matcherHTML}
     `;
 }
 
 async function loadMyRequests() {
     try {
-        const reqs = await api('/api/requests/');
+        const reqs = await api('/api/requests');
         const cont = $('#my-requests');
         if (!reqs.length) { cont.innerHTML = '<div class="empty-state-sm">Du har inga förfrågningar ännu. Skapa en ny!</div>'; return; }
         cont.innerHTML = reqs.map(r => requestCardHTML(r)).join('');
