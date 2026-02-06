@@ -9,6 +9,7 @@ from backend.database import get_db
 from backend.models import (
     Consultant,
     ConsultantStatus,
+    FeasibilityRating,
     StaffingRequest,
     RequestStatus,
 )
@@ -36,7 +37,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             compliance_scores.append(r.assessment.compliance_score)
     avg_compliance = sum(compliance_scores) / max(len(compliance_scores), 1)
 
-    feasibility_count = len([r for r in requests if r.assessment and r.assessment.overall_rating in ("high", "medium")])
+    feasibility_count = len([r for r in requests if r.assessment and r.assessment.overall_rating in (FeasibilityRating.HIGH, FeasibilityRating.MEDIUM)])
     feasibility_rate = feasibility_count / max(total, 1)
 
     return DashboardStats(
